@@ -19,7 +19,7 @@
 #include "n2n.h"
 
 #ifdef __ANDROID_NDK__
-#include "android/edge_android.h"
+#include <edge_jni/edge_jni.h>
 #include <tun2tap/tun2tap.h>
 #endif /* __ANDROID_NDK__ */
 
@@ -586,6 +586,17 @@ void update_supernode_reg(n2n_edge_t * eee, time_t nowTime) {
 
       traceEvent(TRACE_WARNING, "Supernode not responding - moving to %u of %u",
 		 (unsigned int)eee->sn_idx, (unsigned int)eee->sn_num);
+
+#ifdef __ANDROID_NDK__
+      int change = 0;
+      pthread_mutex_lock(&g_status->mutex);
+      change = g_status->running_status == EDGE_STAT_SUPERNODE_DISCONNECT ? 0 : 1;
+      g_status->running_status = EDGE_STAT_SUPERNODE_DISCONNECT;
+      pthread_mutex_unlock(&g_status->mutex);
+      if (change) {
+          g_status->report_edge_status();
+      }
+#endif /* #ifdef __ANDROID_NDK__ */
 
       eee->sup_attempts = N2N_EDGE_SUP_ATTEMPTS;
     }
@@ -1385,6 +1396,17 @@ static void readFromIPSocket(n2n_edge_t * eee) {
 		  eee->sn_wait=0;
 		  eee->sup_attempts = N2N_EDGE_SUP_ATTEMPTS; /* refresh because we got a response */
 
+#ifdef __ANDROID_NDK__
+              int change = 0;
+              pthread_mutex_lock(&g_status->mutex);
+              change = g_status->running_status == EDGE_STAT_CONNECTED ? 0 : 1;
+              g_status->running_status = EDGE_STAT_CONNECTED;
+              pthread_mutex_unlock(&g_status->mutex);
+              if (change) {
+                  g_status->report_edge_status();
+              }
+#endif /* #ifdef __ANDROID_NDK__ */
+
 		  /* REVISIT: store sn_back */
 		  eee->register_lifetime = ra.lifetime;
 		  eee->register_lifetime = MAX(eee->register_lifetime, REGISTER_SUPER_INTERVAL_MIN);
@@ -1521,6 +1543,7 @@ int run_edge_loop(n2n_edge_t * eee, int *keep_running) {
 #ifdef __ANDROID_NDK__
       if ((nowTime - lastArpPeriod) > ARP_PERIOD_INTERVAL) {
           uip_arp_timer();
+          lastArpPeriod = nowTime;
       }
 #endif /* #ifdef __ANDROID_NDK__ */
   } /* while */
@@ -1531,6 +1554,14 @@ int run_edge_loop(n2n_edge_t * eee, int *keep_running) {
   tuntap_close(&(eee->device));
 
   edge_term(eee);
+
+#ifdef __ANDROID_NDK__
+    traceEvent(TRACE_NORMAL, "Edge stoped.");
+    if (!slog) {
+        closeslog(slog);
+        slog = NULL;
+    }
+#endif /* #ifdef __ANDROID_NDK__ */
 
   return(0);
 }
@@ -1622,7 +1653,7 @@ const char *random_device_mac(void)
     static char mac[18];
     int i;
 
-    srand(getpid());
+    srand(gettid());
     for (i = 0; i < sizeof(mac) - 1; ++i) {
         if ((i + 1) % 3 == 0) {
             mac[i] = ':';

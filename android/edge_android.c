@@ -19,7 +19,7 @@
 #include "../n2n.h"
 
 #ifdef __ANDROID_NDK__
-#include "edge_android.h"
+#include <edge_jni/edge_jni.h>
 #include <tun2tap/tun2tap.h>
 
 #define N2N_NETMASK_STR_SIZE    16 /* dotted decimal 12 numbers + 3 dots */
@@ -137,7 +137,7 @@ static int scan_address(char * ip_addr, size_t addr_size,
 
 /* *************************************************** */
 
-int start_edge(const n2n_edge_cmd_t* cmd)
+int start_edge_v2(n2n_edge_status_t* status)
 {
     int     keep_on_running = 0;
     int     local_port = 0 /* any port */;
@@ -150,23 +150,35 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     n2n_edge_t eee;
     int i;
 
-    keep_on_running = 0;
-    pthread_mutex_lock(&status.mutex);
-    status.is_running = keep_on_running;
-    pthread_mutex_unlock(&status.mutex);
-    report_edge_status();
-    if (!cmd) {
+    if (!status) {
         traceEvent( TRACE_ERROR, "Empty cmd struct" );
         return 1;
     }
+    g_status = status;
+    n2n_edge_cmd_t* cmd = &status->cmd;
+
+    keep_on_running = 0;
+    pthread_mutex_lock(&g_status->mutex);
+    g_status->running_status = EDGE_STAT_CONNECTING;
+    pthread_mutex_unlock(&g_status->mutex);
+    g_status->report_edge_status();
 
     traceLevel = cmd->trace_vlevel;
     traceLevel = traceLevel < 0 ? 0 : traceLevel;   /* TRACE_ERROR */
     traceLevel = traceLevel > 4 ? 4 : traceLevel;   /* TRACE_DEBUG */
+    if (!slog) {
+        closeslog(slog);
+        slog = NULL;
+    }
+    slog = initslog(android_log_level(traceLevel), N2N_LOG_FILEPATH);
 
     if (-1 == edge_init(&eee) )
     {
         traceEvent( TRACE_ERROR, "Failed in edge_init" );
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     memset(&(eee.supernode), 0, sizeof(eee.supernode));
@@ -174,6 +186,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
 
     if (cmd->vpn_fd < 0) {
         traceEvent(TRACE_ERROR, "VPN socket is invalid.");
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     eee.device.fd = cmd->vpn_fd;
@@ -199,6 +215,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     {
         traceEvent(TRACE_ERROR, "Ip address is not set.");
         free(encrypt_key);
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     if (cmd->community[0] != '\0')
@@ -209,6 +229,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     {
         traceEvent(TRACE_ERROR, "Community is not set.");
         free(encrypt_key);
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     eee.drop_multicast = cmd->drop_multicast == 0 ? 0 : 1;
@@ -260,6 +284,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     {
         traceEvent(TRACE_ERROR, "Failed in tuntap_open");
         free(encrypt_key);
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     if(local_port > 0)
@@ -272,6 +300,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
         {
             traceEvent(TRACE_ERROR, "twofish setup failed.\n");
             free(encrypt_key);
+            if (!slog) {
+                closeslog(slog);
+                slog = NULL;
+            }
             return 1;
         }
         free(encrypt_key);
@@ -283,6 +315,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
         {
             traceEvent(TRACE_ERROR, "keyschedule setup failed.\n");
             free(encrypt_key);
+            if (!slog) {
+                closeslog(slog);
+                slog = NULL;
+            }
             return 1;
         }
     }
@@ -291,12 +327,20 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     if(eee.udp_sock < 0)
     {
         traceEvent(TRACE_ERROR, "Failed to bind main UDP port %u", (signed int)local_port);
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
     eee.udp_mgmt_sock = open_socket(N2N_EDGE_MGMT_PORT, 0 /* bind LOOPBACK*/ );
     if(eee.udp_mgmt_sock < 0)
     {
         traceEvent( TRACE_ERROR, "Failed to bind management UDP port %u", (unsigned int)N2N_EDGE_MGMT_PORT );
+        if (!slog) {
+            closeslog(slog);
+            slog = NULL;
+        }
         return 1;
     }
 
@@ -330,10 +374,10 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     }
 
     keep_on_running = 1;
-    pthread_mutex_lock(&status.mutex);
-    status.is_running = keep_on_running;
-    pthread_mutex_unlock(&status.mutex);
-    report_edge_status();
+    pthread_mutex_lock(&g_status->mutex);
+    g_status->running_status = EDGE_STAT_CONNECTED;
+    pthread_mutex_unlock(&g_status->mutex);
+    g_status->report_edge_status();
     traceEvent(TRACE_NORMAL, "edge started");
 
     update_supernode_reg(&eee, time(NULL));
@@ -341,7 +385,7 @@ int start_edge(const n2n_edge_cmd_t* cmd)
     return run_edge_loop(&eee, &keep_on_running);
 }
 
-int stop_edge(void)
+int stop_edge_v2(void)
 {
     // quick stop
     int fd = open_socket(0, 0 /* bind LOOPBACK*/ );
@@ -354,12 +398,13 @@ int stop_edge(void)
     peer_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     peer_addr.sin_port = htons(N2N_EDGE_MGMT_PORT);
     sendto(fd, "stop", 4, 0, (struct sockaddr *)&peer_addr, sizeof(struct sockaddr_in));
+    close(fd);
 
+    pthread_mutex_lock(&g_status->mutex);
+    g_status->running_status = EDGE_STAT_DISCONNECT;
+    pthread_mutex_unlock(&g_status->mutex);
+    g_status->report_edge_status();
 
-    pthread_mutex_lock(&status.mutex);
-    status.is_running = 0;
-    pthread_mutex_unlock(&status.mutex);
-    report_edge_status();
     return 0;
 }
 #endif /* #ifdef __ANDROID_NDK__ */

@@ -227,7 +227,12 @@ struct n2n_edge {
 /* ************************************** */
 
 #ifdef __ANDROID_NDK__
-#include <android/log.h>
+#include <slog/slog.h>
+extern int android_log_level(int lvl);
+extern slog_t* slog;
+#ifndef N2N_LOG_FILEPATH
+#define N2N_LOG_FILEPATH	"/storage/sdcard0/wang.switchy.hin2n/n2n_v2.log"
+#endif /* #ifndef N2N_LOG_FILEPATH */
 #endif /* #ifdef __ANDROID_NDK__ */
 #ifndef TRACE_ERROR
 #define TRACE_ERROR     0, __FILE__, __LINE__
