@@ -305,6 +305,7 @@ void set_peer_operational(n2n_edge_t * eee,
 /* ************************************** */
 
 n2n_mac_t broadcast_mac = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+static n2n_mac_t null_mac = {0, 0, 0, 0, 0, 0};
 
 /* ************************************** */
 
@@ -762,6 +763,19 @@ static int handle_PACKET(n2n_edge_t * eee,
 						    payload, psize);
 	++(eee->transop[rx_transop_idx].rx_cnt); /* stats */
 
+#ifdef __ANDROID_NDK__
+  if((psize >= 36) &&
+     (ntohs(*((uint16_t*)&eth_payload[12])) == 0x0806) && /* ARP */
+     (ntohs(*((uint16_t*)&eth_payload[20])) == 0x0002) && /* REPLY */
+     (!memcmp(&eth_payload[28], &eee->gateway_ip, 4))) { /* From gateway */
+    memcpy(eee->gateway_mac, &eth_payload[22], 6);
+
+    traceEvent(TRACE_INFO, "Gateway MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+	       eee->gateway_mac[0], eee->gateway_mac[1], eee->gateway_mac[2],
+	       eee->gateway_mac[3], eee->gateway_mac[4], eee->gateway_mac[5]);
+  }
+#endif
+
 	/* Write ethernet packet to tap device. */
 	traceEvent(TRACE_INFO, "sending to TAP %u", (unsigned int)eth_size);
 	data_sent_len = tuntap_write(&(eee->device), eth_payload, eth_size);
@@ -1098,6 +1112,13 @@ void send_packet2net(n2n_edge_t * eee,
 
   ether_hdr_t eh;
 
+#ifdef __ANDROID_NDK__
+  if(!memcmp(tap_pkt, null_mac, 6)) {
+    traceEvent(TRACE_DEBUG, "Detected packet for the gateway");
+    memcpy(tap_pkt, eee->gateway_mac, 6);
+  }
+#endif
+
   /* tap_pkt is not aligned so we have to copy to aligned memory */
   memcpy(&eh, tap_pkt, sizeof(ether_hdr_t));
 
@@ -1405,6 +1426,8 @@ static void readFromIPSocket(n2n_edge_t * eee) {
               if (change) {
                   g_status->report_edge_status();
               }
+
+              updateGatwayMac(eee);
 #endif /* #ifdef __ANDROID_NDK__ */
 
 		  /* REVISIT: store sn_back */

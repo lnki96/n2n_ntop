@@ -215,6 +215,11 @@ struct n2n_edge {
   size_t              sup_attempts;           /**< Number of remaining attempts to this supernode. */
   n2n_cookie_t        last_cookie;            /**< Cookie sent in last REGISTER_SUPER. */
 
+#ifdef __ANDROID_NDK__
+  uint32_t            gateway_ip;             /**< The IP address of the gateway */
+  n2n_mac_t           gateway_mac;            /**< The MAC address of the gateway */
+#endif
+
   time_t              start_time;             /**< For calculating uptime */
 
   /* Statistics */
@@ -229,6 +234,7 @@ struct n2n_edge {
 #ifdef __ANDROID_NDK__
 #include <slog/slog.h>
 extern int android_log_level(int lvl);
+extern void updateGatwayMac(n2n_edge_t *eee);
 extern slog_t* slog;
 #ifndef N2N_LOG_FILEPATH
 #define N2N_LOG_FILEPATH	"/storage/sdcard0/wang.switchy.hin2n/n2n_v2.log"

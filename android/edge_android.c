@@ -28,8 +28,6 @@
 
 /* *************************************************** */
 
-#if defined(DUMMY_ID_00001) /* Disabled waiting for config option to enable it */
-
 static char gratuitous_arp[] = {
   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, /* Dest mac */
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* Src mac */
@@ -44,6 +42,8 @@ static char gratuitous_arp[] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* Target mac */
   0x00, 0x00, 0x00, 0x00 /* Target IP */
 };
+
+#if defined(DUMMY_ID_00001) /* Disabled waiting for config option to enable it */
 
 /* ************************************** */
 
@@ -78,6 +78,38 @@ static void send_grat_arps(n2n_edge_t * eee,) {
 }
 
 #endif /* #if defined(DUMMY_ID_00001) */
+
+/* ************************************** */
+
+static uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+static int build_unicast_arp(char *buffer, uint16_t buffer_len, uint32_t target, tuntap_dev *device) {
+  if(buffer_len < sizeof(gratuitous_arp)) return(-1);
+
+  memcpy(buffer, gratuitous_arp, sizeof(gratuitous_arp));
+  memcpy(&buffer[6], device->mac_addr, 6);
+  memcpy(&buffer[22], device->mac_addr, 6);
+  memcpy(&buffer[28], &device->ip_addr, 4);
+  memcpy(&buffer[32], broadcast_mac, 6);
+  memcpy(&buffer[38], &target, 4);
+  return(sizeof(gratuitous_arp));
+}
+
+/* ************************************** */
+
+/** Called periodically to update the gateway MAC address. The ARP reply packet
+    is handled in handle_PACKET . */
+
+void updateGatwayMac(n2n_edge_t *eee) {
+  if(eee->gateway_ip != 0) {
+    size_t len;
+    char buffer[48];
+
+    len = build_unicast_arp(buffer, sizeof(buffer), eee->gateway_ip, &eee->device);
+    traceEvent(TRACE_DEBUG, "Updating gateway mac");
+    send_packet2net(eee, buffer, len);
+  }
+}
 
 /* ***************************************************** */
 
@@ -259,6 +291,11 @@ int start_edge_v2(n2n_edge_status_t* status)
     if (cmd->ip_netmask[0] != '\0')
     {
         strncpy(netmask, cmd->ip_netmask, N2N_NETMASK_STR_SIZE);
+    }
+
+    if (cmd->gateway_ip[0] != '\0')
+    {
+        inet_aton(cmd->gateway_ip, &eee.gateway_ip);
     }
 
     for (i=0; i< N2N_EDGE_NUM_SUPERNODES; ++i )
